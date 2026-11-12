@@ -1,0 +1,22 @@
+name: Build Injector
+
+on:
+  push:
+    paths: ["injector/**", ".github/workflows/injector.yml"]
+  pull_request:
+    paths: ["injector/**", ".github/workflows/injector.yml"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S injector -B injector/build -A x64
+      - name: Build
+        run: cmake --build injector/build --config Release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MargaretInjector
+          path: injector/build/Release/MargaretInjector.exe
