@@ -1,4 +1,4 @@
-// Margaret Injector - loads Margaret.dll into a running Minecraft: Java Edition client.
+// Margaret Injector - loads Margaret.dll into a running Minecraft: Bedrock Edition client.
 //
 // Usage:
 //   MargaretInjector.exe                 auto-detect Minecraft and inject Margaret.dll
@@ -108,7 +108,7 @@ DWORD SelectTarget(const Options& opt) {
         }
         if (proc.windowTitle.empty()) {
             std::wcout << L"[*] Warning: PID " << opt.pid << L" (" << proc.exeName
-                       << L") has no Minecraft window. Injecting anyway.\n";
+                       << L") is not Minecraft.Windows.exe. Injecting anyway.\n";
         }
         return opt.pid;
     }
@@ -126,7 +126,7 @@ DWORD SelectTarget(const Options& opt) {
     }
 
     if (procs.empty()) {
-        std::wcerr << L"[!] Minecraft is not running. Start the game (or use --wait) and try again.\n";
+        std::wcerr << L"[!] Minecraft is not running. Start Bedrock Edition (or use --wait) and try again.\n";
         return 0;
     }
 

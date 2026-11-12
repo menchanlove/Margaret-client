@@ -1,5 +1,6 @@
 #include "inject.h"
 
+#include "acl.h"
 #include "process.h"
 
 
@@ -87,7 +88,7 @@ bool ValidateDll(const std::wstring& path, std::wstring& error) {
         return false;
     }
     if (header.Machine != IMAGE_FILE_MACHINE_AMD64) {
-        error = L"The DLL is not built for x64. Minecraft runs on 64-bit Java, so build Margaret as x64.";
+        error = L"The DLL is not built for x64. Bedrock Edition is a 64-bit app, so build Margaret as x64.";
         return false;
     }
     return true;
@@ -112,6 +113,12 @@ InjectResult InjectDll(DWORD pid, const std::wstring& dllPath) {
         return {false, moduleName + L" is already loaded in this Minecraft instance."};
     }
 
+    // Bedrock runs in a UWP AppContainer: without this grant, LoadLibraryW
+    // inside the sandbox fails with ERROR_ACCESS_DENIED (5).
+    if (!GrantAppContainerAccess(fullPath, error)) {
+        return {false, error};
+    }
+
     HandleGuard process(OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION |
                                         PROCESS_VM_WRITE | PROCESS_VM_READ,
                                     FALSE, pid));
@@ -121,7 +128,7 @@ InjectResult InjectDll(DWORD pid, const std::wstring& dllPath) {
     }
 
     if (!Is64BitProcess(process.h)) {
-        return {false, L"The target Java process is 32-bit. Use a 64-bit Java runtime."};
+        return {false, L"The target process is 32-bit, but Bedrock Edition should be 64-bit."};
     }
 
     const SIZE_T bytes = (wcslen(fullPath) + 1) * sizeof(wchar_t);

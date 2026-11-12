@@ -14,13 +14,8 @@ std::wstring ToLower(std::wstring s) {
     return s;
 }
 
-bool IsJavaExe(const std::wstring& exe) {
-    const std::wstring lower = ToLower(exe);
-    return lower == L"javaw.exe" || lower == L"java.exe";
-}
-
-bool StartsWith(const std::wstring& s, const std::wstring& prefix) {
-    return s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0;
+bool IsBedrockExe(const std::wstring& exe) {
+    return ToLower(exe) == ToLower(kBedrockExe);
 }
 
 struct WindowSearch {
@@ -42,17 +37,11 @@ BOOL CALLBACK EnumWindowsProc(HWND hwnd, LPARAM lParam) {
         return TRUE;
     }
 
-    std::wstring title = buf;
-    // The game window is titled "Minecraft <version>" (optionally with
-    // "- Singleplayer" / "- Multiplayer ..."). Skip the launcher.
-    if (StartsWith(title, L"Minecraft") && title.find(L"Launcher") == std::wstring::npos) {
-        search->title = std::move(title);
-        return FALSE;  // found
-    }
-    return TRUE;
+    search->title = buf;
+    return FALSE;  // first visible top-level window of the process
 }
 
-std::wstring FindGameWindowTitle(DWORD pid) {
+std::wstring FindWindowTitle(DWORD pid) {
     WindowSearch search{pid, L""};
     EnumWindows(EnumWindowsProc, reinterpret_cast<LPARAM>(&search));
     return search.title;
@@ -72,12 +61,8 @@ std::vector<GameProcess> FindMinecraftProcesses() {
     entry.dwSize = sizeof(entry);
     if (Process32FirstW(snapshot, &entry)) {
         do {
-            if (!IsJavaExe(entry.szExeFile)) {
-                continue;
-            }
-            std::wstring title = FindGameWindowTitle(entry.th32ProcessID);
-            if (!title.empty()) {
-                result.push_back({entry.th32ProcessID, entry.szExeFile, std::move(title)});
+            if (IsBedrockExe(entry.szExeFile)) {
+                result.push_back({entry.th32ProcessID, entry.szExeFile, FindWindowTitle(entry.th32ProcessID)});
             }
         } while (Process32NextW(snapshot, &entry));
     }
@@ -100,7 +85,7 @@ bool QueryProcess(DWORD pid, GameProcess& out) {
             if (entry.th32ProcessID == pid) {
                 out.pid = pid;
                 out.exeName = entry.szExeFile;
-                out.windowTitle = FindGameWindowTitle(pid);
+                out.windowTitle = FindWindowTitle(pid);
                 found = true;
                 break;
             }
@@ -112,7 +97,6 @@ bool QueryProcess(DWORD pid, GameProcess& out) {
 }
 
 bool Is64BitProcess(HANDLE process) {
-    // IsWow64Process2 (Win10 1511+) also handles ARM64 hosts correctly.
     using IsWow64Process2Fn = BOOL(WINAPI*)(HANDLE, USHORT*, USHORT*);
     auto fn = reinterpret_cast<IsWow64Process2Fn>(
         reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "IsWow64Process2")));

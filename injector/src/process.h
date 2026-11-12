@@ -7,18 +7,20 @@
 
 namespace margaret {
 
-// A running Minecraft (Java Edition) instance.
+// A running Minecraft: Bedrock Edition instance (UWP / Microsoft Store app).
 struct GameProcess {
     DWORD pid = 0;
-    std::wstring exeName;      // javaw.exe / java.exe
-    std::wstring windowTitle;  // e.g. "Minecraft 1.21.x"
+    std::wstring exeName;      // Minecraft.Windows.exe
+    std::wstring windowTitle;  // e.g. "Minecraft" (may be empty while loading)
 };
 
-// Finds every running Java process that owns a visible top-level window
-// whose title starts with "Minecraft" (the launcher window is excluded).
+// The process image name of Bedrock Edition. Version-independent.
+inline const wchar_t* kBedrockExe = L"Minecraft.Windows.exe";
+
+// Finds every running Bedrock Edition process (Minecraft.Windows.exe).
 std::vector<GameProcess> FindMinecraftProcesses();
 
-// Returns info for a specific PID (window title may be empty).
+// Returns info for a specific PID.
 bool QueryProcess(DWORD pid, GameProcess& out);
 
 // True when the process is a native 64-bit process.

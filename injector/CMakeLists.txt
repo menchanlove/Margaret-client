@@ -12,9 +12,11 @@ add_executable(MargaretInjector
     src/main.cpp
     src/inject.cpp
     src/process.cpp
+    src/acl.cpp
 )
 
 target_compile_definitions(MargaretInjector PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_link_libraries(MargaretInjector PRIVATE advapi32)
 
 if(MSVC)
     target_compile_options(MargaretInjector PRIVATE /W4 /utf-8)
