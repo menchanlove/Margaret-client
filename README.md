@@ -21,6 +21,19 @@ Bedrock Edition は **UWP の AppContainer サンドボックス**内で動作�
 本インジェクターは注入前に、DLL ファイルへ **ALL APPLICATION PACKAGES (S-1-15-2-1)** の
 読み取り/実行権限を自動で付与します。これが無いと `LoadLibraryW` が ERROR_ACCESS_DENIED (5) で失敗します。
 
+### GUI 版 (MargaretInjector.exe)
+
+ダークテーマの GUI。起動すると検出された Bedrock インスタンスの一覧が出るので、
+選んで `inject` ボタンを押すだけです。
+
+- **Refresh**: 一覧を再取得
+- **DLL**: 注入する DLL (既定は exe と同じフォルダの `Margaret.dll`、`...` で選択)
+- **inject**: 選択中の Minecraft に注入 (一覧をダブルクリックでも可)
+
+### CLI 版 (MargaretInjectorCLI.exe)
+
+自動化・スクリプト向けのコンソール版。
+
 ### 使い方
 
 1. `MargaretInjector.exe` と同じフォルダに `Margaret.dll` (x64) を置く
