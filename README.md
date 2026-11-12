@@ -23,6 +23,9 @@ Bedrock Edition は **UWP の AppContainer サンドボックス**内で動作�
 
 ### GUI 版 (MargaretInjector.exe)
 
+- **言語**: 左下のボタンで English / 日本語 / 中文 を切り替え (既定は English)。選択は `margaretinjector.ini` に保存されます。
+- **色のカスタマイズ**: `Text` / `BG` ボタンで文字色・背景色を変更でき、設定は保存されます。
+
 ダークテーマの GUI。起動すると検出された Bedrock インスタンスの一覧が出るので、
 選んで `inject` ボタンを押すだけです。
 
