@@ -1,8 +1,9 @@
-// Margaret Injector - GUI front-end (Windows x64).
+// margaretinjector - GUI front-end (Windows x64).
 //
 // A small dark-themed window: pick a running Minecraft: Bedrock Edition
-// instance, choose the DLL, and inject. Reuses the core logic in
-// inject.cpp / process.cpp / acl.cpp.
+// instance, choose the DLL, and inject. Text and background colours are
+// user-configurable (saved to margaretinjector.ini next to the exe).
+// Reuses the core logic in inject.cpp / process.cpp / acl.cpp.
 
 #include <windows.h>
 
@@ -17,20 +18,23 @@
 
 namespace {
 
-constexpr const wchar_t* kAppTitle = L"Margaret Injector";
+constexpr const wchar_t* kAppName = L"margaretinjector";
 constexpr const wchar_t* kVersion = L"1.0.0";
 constexpr const wchar_t* kDefaultDll = L"Margaret.dll";
+constexpr const wchar_t* kCredit = L"made by aki12459";
 
-// Palette (dark theme, Horion-style reference).
-constexpr COLORREF kBg = RGB(26, 26, 28);
+// Fixed palette.
 constexpr COLORREF kPanel = RGB(38, 38, 42);
-constexpr COLORREF kAccent = RGB(93, 200, 232);   // cyan script logo
-constexpr COLORREF kGreen = RGB(76, 175, 92);      // inject button
+constexpr COLORREF kGreen = RGB(76, 175, 92);   // inject button
 constexpr COLORREF kGreenDim = RGB(58, 128, 70);
-constexpr COLORREF kText = RGB(236, 236, 238);
 constexpr COLORREF kSub = RGB(140, 140, 150);
 constexpr COLORREF kBtn = RGB(50, 50, 58);
 constexpr COLORREF kBtnHot = RGB(66, 66, 76);
+constexpr COLORREF kErr = RGB(240, 120, 120);
+
+// User-configurable colours (defaults match the Horion-style look).
+COLORREF g_bg = RGB(26, 26, 28);
+COLORREF g_text = RGB(93, 200, 232);  // cyan
 
 // Control IDs.
 enum {
@@ -44,6 +48,9 @@ enum {
     IDC_SUBTITLE,
     IDC_LIST_LABEL,
     IDC_DLL_LABEL,
+    IDC_COLOR_TEXT,
+    IDC_COLOR_BG,
+    IDC_CREDIT,
 };
 
 constexpr UINT WM_APP_RESULT = WM_APP + 1;
@@ -51,9 +58,9 @@ constexpr UINT WM_APP_RESULT = WM_APP + 1;
 HFONT g_fontTitle = nullptr;
 HFONT g_fontBody = nullptr;
 HFONT g_fontBtn = nullptr;
+HFONT g_fontCredit = nullptr;
 HBRUSH g_brushBg = nullptr;
 HBRUSH g_brushPanel = nullptr;
-HBRUSH g_brushBtn = nullptr;
 
 HWND g_list = nullptr;
 HWND g_dllEdit = nullptr;
@@ -76,6 +83,31 @@ std::wstring ExeDirectory() {
     return pos == std::wstring::npos ? L"." : path.substr(0, pos);
 }
 
+std::wstring IniPath() {
+    return ExeDirectory() + L"\\margaretinjector.ini";
+}
+
+// Colours are stored as 0xRRGGBB text for readability.
+void LoadColors() {
+    const std::wstring ini = IniPath();
+    wchar_t buf[32] = {};
+    auto read = [&](const wchar_t* key, COLORREF def) -> COLORREF {
+        GetPrivateProfileStringW(L"colors", key, L"", buf, 32, ini.c_str());
+        if (buf[0] == L'\0') return def;
+        const unsigned long v = wcstoul(buf, nullptr, 16);
+        return RGB((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF);
+    };
+    g_text = read(L"text", g_text);
+    g_bg = read(L"bg", g_bg);
+}
+
+void SaveColor(const wchar_t* key, COLORREF c) {
+    wchar_t buf[16] = {};
+    swprintf_s(buf, L"%06lX", (static_cast<unsigned long>(GetRValue(c)) << 16) |
+                                  (static_cast<unsigned long>(GetGValue(c)) << 8) | GetBValue(c));
+    WritePrivateProfileStringW(L"colors", key, buf, IniPath().c_str());
+}
+
 std::wstring GetEditText(HWND edit) {
     const int len = GetWindowTextLengthW(edit);
     std::wstring s(len, L'\0');
@@ -84,7 +116,6 @@ std::wstring GetEditText(HWND edit) {
 }
 
 void SetStatus(const std::wstring& text, COLORREF color) {
-    // Color is applied in WM_CTLCOLORSTATIC via the stored value.
     SetWindowLongPtrW(g_status, GWLP_USERDATA, static_cast<LONG_PTR>(color));
     SetWindowTextW(g_status, text.c_str());
     InvalidateRect(g_status, nullptr, TRUE);
@@ -135,6 +166,26 @@ void BrowseForDll(HWND hwnd) {
     }
 }
 
+// Opens the standard colour picker; on OK, applies, saves, and repaints.
+void PickColor(HWND hwnd, COLORREF& target, const wchar_t* iniKey) {
+    static COLORREF custom[16] = {};
+    CHOOSECOLORW cc{};
+    cc.lStructSize = sizeof(cc);
+    cc.hwndOwner = hwnd;
+    cc.lpCustColors = custom;
+    cc.rgbResult = target;
+    cc.Flags = CC_FULLOPEN | CC_RGBINIT;
+    if (ChooseColorW(&cc)) {
+        target = cc.rgbResult;
+        SaveColor(iniKey, target);
+        if (&target == &g_bg) {
+            DeleteObject(g_brushBg);
+            g_brushBg = CreateSolidBrush(g_bg);
+        }
+        InvalidateRect(hwnd, nullptr, TRUE);  // repaint everything
+    }
+}
+
 DWORD WINAPI InjectThread(LPVOID param) {
     std::unique_ptr<InjectJob> job(static_cast<InjectJob*>(param));
     auto* result = new margaret::InjectResult(margaret::InjectDll(job->pid, job->dll));
@@ -145,24 +196,24 @@ DWORD WINAPI InjectThread(LPVOID param) {
 void StartInject(HWND hwnd) {
     const LRESULT sel = SendMessageW(g_list, LB_GETCURSEL, 0, 0);
     if (sel == LB_ERR || sel < 0 || static_cast<size_t>(sel) >= g_pids.size()) {
-        SetStatus(L"注入先の Minecraft を選択してください。", kAccent);
+        SetStatus(L"注入先の Minecraft を選択してください。", kErr);
         return;
     }
 
     std::wstring dll = GetEditText(g_dllEdit);
     if (dll.empty()) {
-        SetStatus(L"DLL を指定してください。", kAccent);
+        SetStatus(L"DLL を指定してください。", kErr);
         return;
     }
 
     std::wstring error;
     if (!margaret::ValidateDll(dll, error)) {
-        SetStatus(error, kAccent);
+        SetStatus(error, kErr);
         return;
     }
 
     EnableWindow(g_injectBtn, FALSE);
-    SetStatus(L"注入中...", kText);
+    SetStatus(L"注入中...", g_text);
 
     auto* job = new InjectJob{hwnd, g_pids[sel], dll};
     HANDLE th = CreateThread(nullptr, 0, InjectThread, job, 0, nullptr);
@@ -171,15 +222,17 @@ void StartInject(HWND hwnd) {
     } else {
         delete job;
         EnableWindow(g_injectBtn, TRUE);
-        SetStatus(L"スレッドの作成に失敗しました。", kAccent);
+        SetStatus(L"スレッドの作成に失敗しました。", kErr);
     }
 }
 
+// Labels carry a colour in GWLP_USERDATA: 0 means "follow g_text".
 HWND MakeLabel(HWND parent, int id, const wchar_t* text, int x, int y, int w, int h, HFONT font,
-               DWORD extra = 0) {
+               DWORD extra = 0, COLORREF color = 0) {
     HWND c = CreateWindowExW(0, L"STATIC", text, WS_CHILD | WS_VISIBLE | extra, x, y, w, h, parent,
                              reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), nullptr, nullptr);
     SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+    SetWindowLongPtrW(c, GWLP_USERDATA, static_cast<LONG_PTR>(color));
     return c;
 }
 
@@ -191,21 +244,19 @@ HWND MakeButton(HWND parent, int id, const wchar_t* text, int x, int y, int w, i
 }
 
 void CreateControls(HWND hwnd) {
-    // Banner (cyan script logo, centred).
-    HWND banner = MakeLabel(hwnd, IDC_BANNER, L"Margaret", 24, 16, 452, 56, g_fontTitle, SS_CENTER);
-    SetWindowLongPtrW(banner, GWLP_USERDATA, static_cast<LONG_PTR>(kAccent));
-    HWND sub = MakeLabel(hwnd, IDC_SUBTITLE, L"Bedrock Edition Injector", 24, 74, 452, 20, g_fontBody,
-                         SS_CENTER);
-    SetWindowLongPtrW(sub, GWLP_USERDATA, static_cast<LONG_PTR>(kSub));
+    MakeLabel(hwnd, IDC_BANNER, kAppName, 24, 16, 452, 56, g_fontTitle, SS_CENTER);
+    MakeLabel(hwnd, IDC_SUBTITLE, L"Bedrock Edition Injector", 24, 76, 452, 20, g_fontBody, SS_CENTER, kSub);
 
-    MakeLabel(hwnd, IDC_LIST_LABEL, L"検出された Minecraft", 24, 94, 300, 18, g_fontBody);
+    MakeLabel(hwnd, IDC_LIST_LABEL, L"検出された Minecraft", 24, 100, 300, 18, g_fontBody);
 
     g_list = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", nullptr,
-                             WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOINTEGRALHEIGHT | LBS_NOTIFY, 24, 114, 352,
-                             110, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LIST)), nullptr, nullptr);
+                             WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOINTEGRALHEIGHT | LBS_NOTIFY, 24, 120, 352,
+                             104, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LIST)), nullptr, nullptr);
     SendMessageW(g_list, WM_SETFONT, reinterpret_cast<WPARAM>(g_fontBody), TRUE);
 
-    MakeButton(hwnd, IDC_REFRESH, L"Refresh", 386, 114, 90, 32);
+    MakeButton(hwnd, IDC_REFRESH, L"Refresh", 386, 120, 90, 30);
+    MakeButton(hwnd, IDC_COLOR_TEXT, L"文字色", 386, 156, 90, 30);
+    MakeButton(hwnd, IDC_COLOR_BG, L"背景色", 386, 192, 90, 30);
 
     MakeLabel(hwnd, IDC_DLL_LABEL, L"DLL", 24, 240, 100, 18, g_fontBody);
     g_dllEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", (ExeDirectory() + L"\\" + kDefaultDll).c_str(),
@@ -216,8 +267,9 @@ void CreateControls(HWND hwnd) {
 
     g_injectBtn = MakeButton(hwnd, IDC_INJECT, L"inject", 24, 304, 452, 46);
 
-    g_status = MakeLabel(hwnd, IDC_STATUS, L"", 24, 358, 452, 40, g_fontBody);
-    SetWindowLongPtrW(g_status, GWLP_USERDATA, static_cast<LONG_PTR>(kSub));
+    g_status = MakeLabel(hwnd, IDC_STATUS, L"", 24, 360, 452, 36, g_fontBody, 0, kSub);
+
+    MakeLabel(hwnd, IDC_CREDIT, kCredit, 236, 402, 240, 18, g_fontCredit, SS_RIGHT, kSub);
 }
 
 void DrawButton(LPDRAWITEMSTRUCT dis) {
@@ -238,7 +290,7 @@ void DrawButton(LPDRAWITEMSTRUCT dis) {
     GetWindowTextW(dis->hwndItem, text, 64);
 
     SetBkMode(dis->hDC, TRANSPARENT);
-    SetTextColor(dis->hDC, isInject ? RGB(240, 248, 240) : (disabled ? kSub : kText));
+    SetTextColor(dis->hDC, isInject ? RGB(240, 248, 240) : (disabled ? kSub : RGB(230, 230, 234)));
     SelectObject(dis->hDC, g_fontBtn);
     DrawTextW(dis->hDC, text, -1, &dis->rcItem, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 }
@@ -250,12 +302,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             RefreshList();
             return 0;
 
+        case WM_ERASEBKGND: {
+            RECT rc;
+            GetClientRect(hwnd, &rc);
+            FillRect(reinterpret_cast<HDC>(wParam), &rc, g_brushBg);
+            return 1;
+        }
+
         case WM_CTLCOLORSTATIC: {
             HDC dc = reinterpret_cast<HDC>(wParam);
             HWND ctl = reinterpret_cast<HWND>(lParam);
             SetBkMode(dc, TRANSPARENT);
             COLORREF color = static_cast<COLORREF>(GetWindowLongPtrW(ctl, GWLP_USERDATA));
-            SetTextColor(dc, color ? color : kText);
+            SetTextColor(dc, color ? color : g_text);
             return reinterpret_cast<LRESULT>(g_brushBg);
         }
 
@@ -263,7 +322,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_CTLCOLOREDIT: {
             HDC dc = reinterpret_cast<HDC>(wParam);
             SetBkColor(dc, kPanel);
-            SetTextColor(dc, kText);
+            SetTextColor(dc, g_text);
             return reinterpret_cast<LRESULT>(g_brushPanel);
         }
 
@@ -279,6 +338,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 BrowseForDll(hwnd);
             } else if (id == IDC_INJECT) {
                 StartInject(hwnd);
+            } else if (id == IDC_COLOR_TEXT) {
+                PickColor(hwnd, g_text, L"text");
+            } else if (id == IDC_COLOR_BG) {
+                PickColor(hwnd, g_bg, L"bg");
             } else if (id == IDC_LIST && HIWORD(wParam) == LBN_DBLCLK) {
                 StartInject(hwnd);
             }
@@ -287,7 +350,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
         case WM_APP_RESULT: {
             std::unique_ptr<margaret::InjectResult> result(reinterpret_cast<margaret::InjectResult*>(lParam));
-            SetStatus(result->message, result->ok ? kAccent : RGB(240, 120, 120));
+            SetStatus(result->message, result->ok ? kGreen : kErr);
             EnableWindow(g_injectBtn, TRUE);
             return 0;
         }
@@ -302,15 +365,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int nShow) {
+    LoadColors();
+
     g_fontTitle = CreateFontW(46, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
                               CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SCRIPT, L"Segoe Script");
     g_fontBody = CreateFontW(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
                              CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
     g_fontBtn = CreateFontW(17, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
                             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-    g_brushBg = CreateSolidBrush(kBg);
+    g_fontCredit = CreateFontW(14, 0, 0, 0, FW_NORMAL, TRUE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                               CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    g_brushBg = CreateSolidBrush(g_bg);
     g_brushPanel = CreateSolidBrush(kPanel);
-    g_brushBtn = CreateSolidBrush(kBtn);
 
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(wc);
@@ -322,11 +388,11 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int nShow) {
     wc.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
     RegisterClassExW(&wc);
 
-    const int width = 516, height = 456;
+    const int width = 516, height = 476;
     const int x = (GetSystemMetrics(SM_CXSCREEN) - width) / 2;
     const int y = (GetSystemMetrics(SM_CYSCREEN) - height) / 2;
 
-    HWND hwnd = CreateWindowExW(0, wc.lpszClassName, (std::wstring(kAppTitle) + L"  v" + kVersion).c_str(),
+    HWND hwnd = CreateWindowExW(0, wc.lpszClassName, (std::wstring(kAppName) + L"  v" + kVersion).c_str(),
                                 WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, x, y, width, height,
                                 nullptr, nullptr, hInst, nullptr);
     if (!hwnd) return 1;
@@ -345,8 +411,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int nShow) {
     DeleteObject(g_fontTitle);
     DeleteObject(g_fontBody);
     DeleteObject(g_fontBtn);
+    DeleteObject(g_fontCredit);
     DeleteObject(g_brushBg);
     DeleteObject(g_brushPanel);
-    DeleteObject(g_brushBtn);
     return 0;
 }
